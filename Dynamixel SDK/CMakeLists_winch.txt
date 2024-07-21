@@ -1,0 +1,133 @@
+cmake_minimum_required(VERSION 3.16)
+
+set(PROJECT_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+include(cmake/GetGitVersion.cmake)
+get_git_version(GIT_VERSION)
+string(REGEX MATCH "[0-9].[0-9].[0-9]" PARSED_VERSION ${GIT_VERSION})
+message(STATUS "Using parsed version: ${PARSED_VERSION}")
+
+project(winch VERSION ${PARSED_VERSION} LANGUAGES CXX)
+
+configure_file(include/winchVersion.h.in ${CMAKE_CURRENT_BINARY_DIR}/winchVersion.h)
+include_directories(${CMAKE_CURRENT_BINARY_DIR})        ## TODO nicer to have it only for the target, but there are some errors when exporting the lib
+
+set(CMAKE_CXX_STANDARD 17)
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+find_package(plog REQUIRED)
+
+#find_package(PkgConfig REQUIRED)
+#pkg_check_modules(glog REQUIRED libglog)
+# Include directories
+include_directories(
+        /usr/local/include
+        /usr/local/include/sysfspwm
+        /usr/local/include/udevpp
+        include
+)
+
+# Add the custom made DynamixelServo library
+add_library(DynamixelServo STATIC src/DynamixelServo.cpp include/errorCodes.h)
+# Link the dynamixel_sdk library to the custom made DynamixelServo library
+# In WSL2
+#target_link_libraries(DynamixelServo dxl_x64_cpp)
+# On Khadas
+target_link_libraries(DynamixelServo PRIVATE dxl_sbc_cpp)
+set_target_properties(DynamixelServo PROPERTIES PUBLIC_HEADER "include/DynamixelServo.h;include/json.hpp;include/errorCodes.h")
+
+# Create a Library for the json.hpp file, otherwise it will complain if it is not included
+add_library(jsonLib INTERFACE)
+target_include_directories(jsonLib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}include/json.hpp)
+
+# PWM Driver
+add_library(pwmDriver STATIC src/pwmDriver.cpp)
+target_link_libraries(pwmDriver PRIVATE sysfspwm udevpp udev)
+set_target_properties(pwmDriver PROPERTIES PUBLIC_HEADER "include/pwmDriver.h")
+
+# PWM Executable
+add_executable(pwmTest src/pwmTest.cpp src/pwmDriver.cpp include/pwmDriver.h)
+target_link_libraries(pwmTest pwmDriver)
+
+# Add the winch library
+add_library(winch STATIC src/winch.cpp include/winchVersion.h)
+# Link the required libraries: DynamixelServo, Threads::Threads, wiringPi
+# wiringPi needs the following libraries: rt, crypt
+#target_include_directories(winch PRIVATE
+#        )
+target_link_libraries(winch PRIVATE
+        DynamixelServo
+        hx711
+        pwmDriver
+        Threads::Threads
+        wiringPi
+        rt
+        crypt
+        plog::plog
+        jsonLib)
+set_target_properties(winch PROPERTIES PUBLIC_HEADER "include/winch.h;${CMAKE_CURRENT_BINARY_DIR}/winchVersion.h;include/plogCustomFormatters.h")
+
+# Add an executable based on the main.cpp
+add_executable(mainScript src/main.cpp src/winch.cpp include/winch.h)
+
+# Link the winch library to the executable
+target_link_libraries(mainScript winch)
+
+# HX711 Calibration
+add_executable(hx711_calibration src/Calibration.cpp)
+target_link_libraries(hx711_calibration hx711 Threads::Threads wiringPi rt crypt)
+
+# Add main.cpp file of project root directory as source file
+set(SOURCE_FILES src/main.cpp src/Calibration.cpp)
+
+################################################################
+# Installation
+include(GNUInstallDirs)
+set(INSTALL_CONFIGDIR ${CMAKE_INSTALL_LIBDIR}/cmake/winch)
+
+install(TARGETS winch DynamixelServo pwmDriver  jsonLib  #TODO: remove DynamixelServo by making completely static (first find deps)
+        EXPORT winch-targets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        )
+
+#Export the targets to a script
+install(EXPORT winch-targets
+        FILE
+        winchTargets.cmake
+        NAMESPACE
+        winch::
+        DESTINATION
+        ${INSTALL_CONFIGDIR}
+        )
+
+#Create a ConfigVersion.cmake file
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+        ${CMAKE_CURRENT_BINARY_DIR}/winchConfigVersion.cmake
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY AnyNewerVersion
+)
+
+configure_package_config_file(${CMAKE_CURRENT_LIST_DIR}/cmake/winchConfig.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/winchConfig.cmake
+        INSTALL_DESTINATION ${INSTALL_CONFIGDIR}
+        )
+
+#Install the config, configversion and custom find modules
+install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/winchConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/winchConfigVersion.cmake        #TODO: also add FindDynamixelSDK etc for all deps
+        DESTINATION ${INSTALL_CONFIGDIR}
+        )
+
+##############################################
+## Exporting from the build tree
+
+export(EXPORT winch-targets FILE ${CMAKE_CURRENT_BINARY_DIR}/winchTargets.cmake NAMESPACE winch::)
+
+#Register package in user's package registry
+export(PACKAGE winch)
+
+
+

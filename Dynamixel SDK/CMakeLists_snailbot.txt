@@ -1,0 +1,48 @@
+cmake_minimum_required(VERSION 3.0)
+project(snailbot_code)
+
+# Set important directories
+set(DIR_THOR ../DynamixelSDK/c++/build/linux64)
+set(DIR_OBJS ./.objects)
+
+# Set executable file
+set(EXECUTABLE snailbot_code.cpp)
+
+# Compiler options
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -O3 -DLINUX -D_GNU_SOURCE -Wall -g")
+
+# Core components
+include_directories(include)
+include_directories(../DynamixelSDK/c++/include/dynamixel_sdk)
+link_libraries(dxl_x64_cpp) #for linux64: dxl_x64_cpp, linux32: dxl_x86_cpp
+link_libraries(rt)
+
+# Files
+set(SOURCES
+    src/DynamixelServo.cpp
+    execute/${EXECUTABLE}
+    src/FullCycle.cpp
+    src/ManualMode.cpp
+    src/BasicFunctions.cpp
+)
+
+# Create library target for DynamixelServo.cpp
+add_library(dynamixel_servo_lib ${SOURCES})
+
+# Create executable target for snailbot_code.cpp
+add_executable(snailbot_code execute/${EXECUTABLE})
+
+# Link the library target to the executable target
+target_link_libraries(snailbot_code dynamixel_servo_lib)
+target_link_libraries(snailbot_code pigpio)
+
+# Specify output directory for object files
+set_target_properties(${snailbot_code} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${DIR_OBJS}
+)
+
+# Specify the build type
+set(CMAKE_BUILD_TYPE Debug)  # or Release, etc.
+
+# Ensure the objects directory exists
+file(MAKE_DIRECTORY ${DIR_OBJS})
